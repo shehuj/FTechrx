@@ -40,7 +40,7 @@ sudo yum update -y
 
 # Install Java (required for Jenkins)
 print_header "Installing Java 11..."
-sudo yum install -y java-11-openjdk java-11-openjdk-devel
+sudo yum install java-11-amazon-corretto  # includes the headful runtime + JDK tools  [oai_citation:0‡AWS Documentation](https://docs.aws.amazon.com/corretto/latest/corretto-11-ug/amazon-linux-install.html?utm_source=chatgpt.com)
 
 # Set JAVA_HOME
 echo 'export JAVA_HOME=/usr/lib/jvm/java-11-openjdk' | sudo tee -a /etc/environment
