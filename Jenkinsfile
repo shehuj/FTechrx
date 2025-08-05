@@ -5,7 +5,6 @@ pipeline {
     DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
     DOCKERHUB_REPO         = 'captcloud01/dataSets'
     APP_NAME               = 'patient-data-collection'
-    NODE_VERSION           = '18'
     DOCKER_LATEST_TAG      = 'latest'
   }
 
