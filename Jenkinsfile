@@ -733,4 +733,4 @@ ENDSSH
                             </ul>
                             """,
                             mimeType: 'text/html',
-                            to: "${NOTIFICATION_
+                            to: "${NOTIFICATION_EMAIL}"
