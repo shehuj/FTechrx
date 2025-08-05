@@ -3,13 +3,10 @@ pipeline {
 
   environment {
     DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-    DOCKERHUB_REPO         = 'captcloud01/FTechrx'
+    DOCKERHUB_REPO         = 'captcloud01/dataSets'
     APP_NAME               = 'patient-data-collection'
     NODE_VERSION           = '18'
-    BUILD_VERSION          = "${BUILD_NUMBER}"
-    GIT_COMMIT_SHORT       = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-    DOCKER_TAG             = "${BUILD_VERSION}-${GIT_COMMIT_SHORT}"
-    DOCKER_LATEST_TAG      = "latest"
+    DOCKER_LATEST_TAG      = 'latest'
   }
 
   options {
@@ -22,9 +19,13 @@ pipeline {
     stage('Checkout') {
       steps {
         echo "🔄 Checking out code..."
-        checkout scm
         script {
-          currentBuild.displayName = "#${BUILD_NUMBER} - ${GIT_COMMIT_SHORT}"
+          // Checkout and capture git metadata
+          def scmVars = checkout scm
+          env.GIT_COMMIT_SHORT = scmVars.GIT_COMMIT.length() > 7 ? scmVars.GIT_COMMIT.take(7) : scmVars.GIT_COMMIT
+          env.BUILD_VERSION = "${BUILD_NUMBER}"
+          env.DOCKER_TAG = "${env.BUILD_VERSION}-${env.GIT_COMMIT_SHORT}"
+          currentBuild.displayName = "#${BUILD_NUMBER} - ${env.GIT_COMMIT_SHORT}"
           currentBuild.description = "Branch: ${env.BRANCH_NAME}"
         }
       }
@@ -118,15 +119,15 @@ EOF
       steps {
         echo "🐳 Building Docker image..."
         script {
-          def dockerImage = docker.build("${DOCKERHUB_REPO}:${DOCKER_TAG}")
+          def dockerImage = docker.build("${DOCKERHUB_REPO}:${env.DOCKER_TAG}")
           if (env.BRANCH_NAME in ['main', 'master']) {
             dockerImage.tag("${DOCKER_LATEST_TAG}")
           }
           env.DOCKER_IMAGE_ID = dockerImage.id
         }
         sh """
-          docker images ${DOCKERHUB_REPO}:${DOCKER_TAG}
-          docker inspect ${DOCKERHUB_REPO}:${DOCKER_TAG}
+          docker images ${DOCKERHUB_REPO}:${env.DOCKER_TAG}
+          docker inspect ${DOCKERHUB_REPO}:${env.DOCKER_TAG}
         """
       }
     }
@@ -137,7 +138,7 @@ EOF
         script {
           try {
             sh """
-              docker run -d --name test-container-${BUILD_NUMBER} -p 3001:3000 ${DOCKERHUB_REPO}:${DOCKER_TAG}
+              docker run -d --name test-container-${BUILD_NUMBER} -p 3001:3000 ${DOCKERHUB_REPO}:${env.DOCKER_TAG}
               sleep 10
               curl -f http://localhost:3001/health || exit 1
               echo "✅ Container health check passed"
@@ -153,20 +154,18 @@ EOF
     }
 
     stage('Push to Docker Hub') {
-      when {
-        anyOf { branch 'main'; branch 'master'; branch 'develop' }
-      }
+      when { anyOf { branch 'main'; branch 'master'; branch 'develop' } }
       steps {
         echo "🚀 Pushing Docker image to Docker Hub..."
         script {
           docker.withRegistry('https://registry.hub.docker.com', 'dockerhub-credentials') {
-            docker.image("${DOCKERHUB_REPO}:${DOCKER_TAG}").push()
-            if (env.BRANCH_NAME in ['main', 'master']) {
+            docker.image("${DOCKERHUB_REPO}:${env.DOCKER_TAG}").push()
+            if (env.BRANCH_NAME in ['main','master']) {
               docker.image("${DOCKERHUB_REPO}:${DOCKER_LATEST_TAG}").push()
             }
           }
         }
-        echo "✅ Successfully pushed ${DOCKERHUB_REPO}:${DOCKER_TAG}"
+        echo "✅ Successfully pushed ${DOCKERHUB_REPO}:${env.DOCKER_TAG}"
       }
     }
 
@@ -178,12 +177,12 @@ EOF
           sshagent(['ec2-staging-key']) {
             sh """
               ssh -o StrictHostKeyChecking=no ec2-user@your-staging-server << 'EOF'
-                docker pull ${DOCKERHUB_REPO}:${DOCKER_TAG}
+                docker pull ${DOCKERHUB_REPO}:${env.DOCKER_TAG}
                 docker stop patient-data-staging || true
                 docker rm patient-data-staging || true
                 docker run -d --name patient-data-staging -p 3000:3000 \\
                   -v /opt/patient-data/staging:/app/data -e NODE_ENV=staging \\
-                  --restart unless-stopped ${DOCKERHUB_REPO}:${DOCKER_TAG}
+                  --restart unless-stopped ${DOCKERHUB_REPO}:${env.DOCKER_TAG}
                 sleep 10 && curl -f http://localhost:3000/health
 EOF
             """
@@ -208,23 +207,21 @@ EOF
           sshagent(['ec2-production-key']) {
             sh """
               ssh -o StrictHostKeyChecking=no ec2-user@your-production-server << 'EOF'
-                docker pull ${DOCKERHUB_REPO}:${DOCKER_TAG}
+                docker pull ${DOCKERHUB_REPO}:${env.DOCKER_TAG}
                 docker stop patient-data-prod || true
                 docker rm patient-data-prod || true
                 docker run -d --name patient-data-prod -p 3000:3000 \\
                   -v /opt/patient-data/production:/app/data \\
                   -v /opt/patient-data/logs:/app/logs \\
                   -e NODE_ENV=production --restart unless-stopped \\
-                  ${DOCKERHUB_REPO}:${DOCKER_TAG}
+                  ${DOCKERHUB_REPO}:${env.DOCKER_TAG}
                 sleep 15 && curl -f http://localhost:3000/health
-                echo "Deployed ${DOCKERHUB_REPO}:${DOCKER_TAG} at \$(date)" >> /opt/patient‑data/deployment.log
+                echo "Deployed ${DOCKERHUB_REPO}:${env.DOCKER_TAG} at \$(date)" >> /opt/patient‑data/deployment.log
 EOF
             """
           }
         }
-        script {
-          currentBuild.description += " | Deployed by: ${params.DEPLOYER}"
-        }
+        script { currentBuild.description += " | Deployed by: ${params.DEPLOYER ?: 'N/A'}" }
       }
     }
   }
@@ -241,8 +238,24 @@ EOF
             xargs -I {} docker rmi ${DOCKERHUB_REPO}:{} || true
           '''
         } else {
-          echo "⚠️ No workspace context available—skipping cleanup" 
+          echo "⚠️ No workspace context available—skipping cleanup"
         }
+      }
+    }
+    failure {
+      echo "❌ Pipeline failed!"
+      script {
+        def commitShort = env.GIT_COMMIT_SHORT ?: 'unknown'
+        emailext(
+          subject: "❌ Build Failed – ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+          body: """
+            Build failed.
+            Branch: ${env.BRANCH_NAME}
+            Commit (short): ${commitShort}
+            Build URL: ${env.BUILD_URL}
+          """,
+          to: "devops@yourcompany.com"
+        )
       }
     }
     success {
@@ -250,34 +263,21 @@ EOF
       script {
         if (env.BRANCH_NAME in ['main','master']) {
           emailext(
-            subject: "✅ Production Deployment Successful - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+            subject: "✅ Production Deployment Successful – ${env.JOB_NAME} #${env.BUILD_NUMBER}",
             body: """
-              The patient data collection app has been deployed to production.
-              Build: ${env.BUILD_URL}
-              Docker Image: ${DOCKERHUB_REPO}:${DOCKER_TAG}
-              Git Commit: ${GIT_COMMIT_SHORT}
-              Deployed by: ${params.DEPLOYER}
+              Deployed by: ${params.DEPLOYER ?: 'N/A'}
+              Branch: ${env.BRANCH_NAME}
+              Commit (short): ${env.GIT_COMMIT_SHORT}
+              Docker Image: ${env.DOCKERHUB_REPO}:${env.DOCKER_TAG}
+              Build URL: ${env.BUILD_URL}
             """,
             to: "devops@yourcompany.com"
           )
         }
       }
     }
-    failure {
-      echo "❌ Pipeline failed!"
-      emailext(
-        subject: "❌ Build Failed - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-        body: """
-          Build failed. See console logs.
-          Build: ${env.BUILD_URL}
-          Branch: ${env.BRANCH_NAME}
-          Commit: ${GIT_COMMIT_SHORT}
-        """,
-        to: "devops@yourcompany.com"
-      )
-    }
     unstable {
-      echo "⚠️ Build is unstable."
+      echo "⚠️ Build is unstable"
     }
   }
 }
