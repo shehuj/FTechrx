@@ -3,7 +3,7 @@ pipeline {
 
   environment {
     DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-    DOCKERHUB_REPO         = 'captcloud01/dataSets'
+    DOCKERHUB_REPO         = 'captcloud01/FTechrx'
     APP_NAME               = 'patient-data-collection'
     DOCKER_LATEST_TAG      = 'latest'
   }
