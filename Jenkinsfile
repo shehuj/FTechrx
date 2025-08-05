@@ -195,7 +195,7 @@ docker run -d --name prod -p 3000:3000 \\
   -v /opt/app/prod:/data -v /opt/app/logs:/logs \\
   -e NODE_ENV=production --restart unless-stopped ${DOCKERHUB_REPO}:${env.DOCKER_TAG}
 sleep 15 && curl -f http://localhost:3000/health
-echo "Deployed at $(date)" >> /opt/app/deploy.log
+echo ${Deployed at $(date)} >> /opt/app/deploy.log
 EOF"""
           }
         }
